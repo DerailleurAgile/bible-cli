@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+
+# Local response cache — normally lives at ~/.cache/bible/, but ignore it
+# here too in case XDG_CACHE_HOME is pointed into the repo.
+.cache/
+/bible/*.json
