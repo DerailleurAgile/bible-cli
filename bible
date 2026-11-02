@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
-"""bible -- fetch ESV Bible passages from the command line.
+"""bible -- fetch ESV or NET Bible passages from the command line.
 
 Usage:
   bible luke 2:1-5
   bible psalm 29:1-10
   bible psalm 150
   bible John 3:16
+  bible -t net John 3:16
 
-Requires a free ESV API key from https://api.esv.org/ in the
-ESV_API_KEY environment variable.
+The ESV (the default) requires a free API key from https://api.esv.org/
+in the ESV_API_KEY environment variable. The NET Bible needs no key.
 """
 
 import argparse
 import hashlib
+import html
 import json
 import os
+import re
 import shutil
 import sys
+import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
 
 API_URL = "https://api.esv.org/v3/passage/text/"
+NET_API_URL = "https://labs.bible.org/api/"
 CACHE_DIR = os.path.join(
     os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "bible"
 )
@@ -71,7 +76,7 @@ def cache_path(params):
     return os.path.join(CACHE_DIR, hashlib.sha256(blob).hexdigest()[:16] + ".json")
 
 
-def fetch(params, key, use_cache=True):
+def fetch(url, params, headers=None, use_cache=True, missing=()):
     path = cache_path(params)
     if use_cache and os.path.exists(path):
         try:
@@ -80,18 +85,27 @@ def fetch(params, key, use_cache=True):
         except (OSError, ValueError):
             pass
 
-    url = API_URL + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={"Authorization": f"Token {key}"})
+    req = urllib.request.Request(url + "?" + urllib.parse.urlencode(params), headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.load(resp)
+            body = resp.read()
     except urllib.error.HTTPError as exc:
+        if exc.code in missing:
+            return None
         if exc.code == 401:
             die("API key rejected (HTTP 401). Check ESV_API_KEY.")
         detail = exc.read().decode(errors="replace").strip()[:300]
-        die(f"ESV API returned HTTP {exc.code}. {detail}")
+        die(f"{urllib.parse.urlsplit(url).netloc} returned HTTP {exc.code}. {detail}")
     except urllib.error.URLError as exc:
         die(f"network error: {exc.reason}")
+
+    # The NET API answers an unknown reference with an empty body (or a 400).
+    if not body.strip():
+        return None
+    try:
+        data = json.loads(body)
+    except ValueError:
+        die(f"unexpected response from {urllib.parse.urlsplit(url).netloc}")
 
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -102,25 +116,105 @@ def fetch(params, key, use_cache=True):
     return data
 
 
+def net_reference(verses):
+    first, last = verses[0], verses[-1]
+    start = f"{first['bookname']} {first['chapter']}:{first['verse']}"
+    if first is last:
+        return start
+    if last["bookname"] != first["bookname"]:
+        return f"{start}–{last['bookname']} {last['chapter']}:{last['verse']}"
+    if last["chapter"] != first["chapter"]:
+        return f"{start}–{last['chapter']}:{last['verse']}"
+    return f"{start}–{last['verse']}"
+
+
+def format_net(verses, args):
+    """Lay out a NET passage like the ESV API's text output.
+
+    With formatting=para each <p class="bodytext|poetry"> starts a new
+    paragraph (poetry: one per line); text before any <p> continues the
+    current one.
+    """
+    paras = []  # [style, [text pieces]]
+    for v in verses:
+        prefix = "" if args.no_verse_numbers else f"[{v['verse']}] "
+        for tok in re.split(r"(<[^>]+>)", v["text"]):
+            m = re.match(r"<p\b(?:[^>]*\bclass=\"(\w+)\")?[^>]*>", tok)
+            if m:
+                paras.append([m.group(1) or "bodytext", []])
+            elif tok.startswith("</p"):
+                paras.append(["bodytext", []])
+            elif not tok.startswith("<") and tok.strip():
+                if not paras:
+                    paras.append(["bodytext", []])
+                paras[-1][1].append(prefix + tok)
+                prefix = ""
+
+    lines = []
+    for style, pieces in paras:
+        text = re.sub(r"\s+", " ", html.unescape(" ".join(pieces))).strip()
+        if text:
+            lines.append([style, text])
+    if not args.no_copyright and lines:
+        lines[-1][1] += " (NET)"
+
+    width = target_width(args.width)
+    out = [net_reference(verses), ""]
+    for style, text in lines:
+        if style == "poetry":
+            out.append(textwrap.fill(text, width, initial_indent="    ", subsequent_indent="        "))
+        else:
+            out.append(textwrap.fill(text, width, initial_indent="  "))
+    return "\n".join(out)
+
+
+def run_net(query, args):
+    if args.footnotes:
+        die("the NET Bible API doesn't provide its translators' notes; drop --footnotes")
+    results = []
+    for ref in (r.strip() for r in query.split(";")):
+        if ref:
+            params = {"passage": ref, "type": "json", "formatting": "para"}
+            data = fetch(NET_API_URL, params, use_cache=not args.no_cache, missing=(400,))
+            if not data and not args.raw:
+                print(f"bible: no passage found for {ref!r}", file=sys.stderr)
+            results.append(data or [])
+
+    if args.raw:
+        json.dump(results, sys.stdout, indent=2)
+        print()
+        return
+    if not any(results):
+        sys.exit(1)
+    print("\n\n".join(format_net(verses, args) for verses in results if verses))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="bible",
-        description="Fetch ESV Bible passages from the command line.",
+        description="Fetch ESV or NET Bible passages from the command line.",
         epilog=(
             "examples:\n"
             "  bible luke 2:1-5\n"
             "  bible psalm 29:1-10\n"
             "  bible psalm 150\n"
             "  bible 'John 3:16; Romans 8:28'\n"
+            "  bible -t net John 3:16\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("reference", nargs="+", help="passage, e.g. luke 2:1-5")
-    parser.add_argument("--no-verse-numbers", action="store_true", help="hide verse numbers")
-    parser.add_argument("--no-headings", action="store_true", help="hide section headings")
-    parser.add_argument("--footnotes", action="store_true", help="include footnotes")
     parser.add_argument(
-        "--no-copyright", action="store_true", help="hide the trailing '(ESV)' tag"
+        "-t", "--translation", choices=["esv", "net"], default="esv",
+        help="translation to fetch (default: esv)",
+    )
+    parser.add_argument("--no-verse-numbers", action="store_true", help="hide verse numbers")
+    parser.add_argument(
+        "--no-headings", action="store_true", help="hide section headings (ESV only)"
+    )
+    parser.add_argument("--footnotes", action="store_true", help="include footnotes (ESV only)")
+    parser.add_argument(
+        "--no-copyright", action="store_true", help="hide the trailing '(ESV)'/'(NET)' tag"
     )
     parser.add_argument(
         "--width", type=int, metavar="N",
@@ -131,9 +225,15 @@ def main():
     args = parser.parse_args()
 
     query = " ".join(args.reference).strip()
+    if args.translation == "net":
+        run_net(query, args)
+        return
+
     key = get_api_key()
     params = build_params(query, args)
-    data = fetch(params, key, use_cache=not args.no_cache)
+    data = fetch(API_URL, params, {"Authorization": f"Token {key}"}, use_cache=not args.no_cache)
+    if data is None:
+        die(f"no passage found for {query!r}")
 
     if args.raw:
         json.dump(data, sys.stdout, indent=2)

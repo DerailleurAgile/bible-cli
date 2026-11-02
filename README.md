@@ -1,12 +1,13 @@
 # bible
 
-A tiny command-line tool for fetching ESV Bible passages.
+A tiny command-line tool for fetching ESV or NET Bible passages.
 
 ```
 bible luke 2:1-5
 bible psalm 29:1-10
 bible psalm 150
 bible 'John 3:16; Romans 8:28'
+bible -t net John 3:16
 ```
 
 ## Installation
@@ -40,6 +41,8 @@ bible --help
 
 ## Setup
 
+The NET Bible (`-t net`) needs no setup. For the ESV (the default):
+
 1. Get a free API key from <https://api.esv.org/> (create an account, then
    **Account → Create API Application**).
 2. Put it in your environment:
@@ -54,10 +57,11 @@ bible --help
 
 | Flag                 | Effect                                                |
 | -------------------- | ---------------------------------------------------- |
+| `-t`, `--translation` | `esv` (default) or `net`                             |
 | `--no-verse-numbers` | hide verse numbers                                    |
-| `--no-headings`      | hide section headings                                 |
-| `--footnotes`        | include footnotes                                     |
-| `--no-copyright`     | hide the trailing `(ESV)` tag                         |
+| `--no-headings`      | hide section headings (ESV only)                      |
+| `--footnotes`        | include footnotes (ESV only)                          |
+| `--no-copyright`     | hide the trailing `(ESV)` / `(NET)` tag               |
 | `--width N`          | wrap at N columns (default: terminal width, max 80)   |
 | `--no-cache`         | bypass the local cache                                |
 | `--raw`              | print the raw JSON response                           |
@@ -68,3 +72,9 @@ bible --help
   doesn't change), so repeated lookups are instant and work offline.
 - Scripture quotations are from the ESV® Bible, copyright © Crossway.
   Usage is subject to the ESV API terms at <https://api.esv.org/>.
+- NET passages come from the NET Bible API at <https://labs.bible.org/>.
+  It has no section headings, and it doesn't serve the NET's translators'
+  notes, so `--footnotes` and `--no-headings` don't apply. Scripture quoted
+  by permission. Quotations designated (NET) are from the NET Bible®
+  copyright ©1996, 2019 by Biblical Studies Press, L.L.C. All rights
+  reserved.
