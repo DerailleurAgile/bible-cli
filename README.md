@@ -8,6 +8,7 @@ bible psalm 29:1-10
 bible psalm 150
 bible 'John 3:16; Romans 8:28'
 bible -t net John 3:16
+bible --books nt        # list the books, to jog your memory
 ```
 
 ## Installation
@@ -58,6 +59,7 @@ The NET Bible (`-t net`) needs no setup. For the ESV (the default):
 | Flag                 | Effect                                                |
 | -------------------- | ---------------------------------------------------- |
 | `-t`, `--translation` | `esv` (default) or `net`                             |
+| `--books [ot\|nt]`  | list the Old or New Testament books (both if omitted), with chapter counts |
 | `--no-verse-numbers` | hide verse numbers                                    |
 | `--no-headings`      | hide section headings (ESV only)                      |
 | `--footnotes`        | include footnotes (ESV only)                          |
